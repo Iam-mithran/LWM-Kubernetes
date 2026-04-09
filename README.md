@@ -2497,6 +2497,1687 @@ spec:
 
 ---
 
+# 🚀 Kubernetes Part 10 – CRI, CNI & CSI – The Core Kubernetes Interfaces
+
+
+## 📚 What You Will Learn
+
+In **Day 10**, we explore the **three critical plugin interfaces** (CRI, CNI, CSI), **Network Policies**, **Pod Security Admission**, and how to perform a **Kubernetes Cluster Upgrade** safely.
+
+✅ Understand what CRI, CNI, and CSI are and why they exist
+✅ Learn how Kubernetes decouples runtime, network, and storage via interfaces
+✅ Explore popular plugins for each interface
+✅ Hands-on Network Policy lab – deny all traffic and allow from specific namespaces
+✅ Enforce Pod Security Standards using Pod Security Admission (PSA)
+✅ Step-by-step Kubernetes cluster upgrade (EKS 1.34 → 1.35)
+✅ Use PodDisruptionBudgets, kubectl drain, cordon, and uncordon
+
+---
+
+## 🧩 Overview – Why CRI, CNI & CSI?
+
+Kubernetes follows a **plugin-based architecture**. Instead of tightly coupling container runtimes, networking, and storage into the core, Kubernetes defines **standard interfaces** that allow third-party providers to plug in their own implementations.
+
+| Interface | Full Form | Responsibility |
+| --------- | ------------------------------ | ---------------------------------- |
+| **CRI** | Container Runtime Interface | Managing container lifecycle |
+| **CNI** | Container Network Interface | Pod-to-Pod networking |
+| **CSI** | Container Storage Interface | Provisioning and managing storage |
+
+---
+
+## 🏗️ CRI – Container Runtime Interface
+
+### 🔨 What is CRI?
+
+CRI is the **standard API** that Kubernetes uses to communicate with container runtimes. It defines how the kubelet interacts with the runtime to pull images, create containers, start/stop them, and collect logs.
+
+Before CRI, Kubernetes was tightly coupled to Docker. CRI was introduced to make the runtime layer **pluggable and interchangeable**.
+
+### 🔄 How CRI Works
+
+```
+kubelet  ──(gRPC)──▶  CRI Runtime Shim  ──▶  Container Runtime (e.g., containerd, CRI-O)
+```
+
+The kubelet talks to the CRI shim via **gRPC**, and the shim translates the requests into runtime-specific calls.
+
+### ✅ Popular CRI Runtimes
+
+| Runtime | Description |
+| --------------- | -------------------------------------------------- |
+| **containerd** | Default runtime for most Kubernetes distributions |
+| **CRI-O** | Lightweight runtime designed specifically for K8s |
+| **kata-runtime**| Runs containers inside lightweight VMs for isolation|
+
+### 🔧 Check Your Current CRI Runtime
+
+```bash
+# Check the container runtime on each node
+kubectl get nodes -o wide
+```
+
+The `CONTAINER-RUNTIME` column shows which runtime is in use (e.g., `containerd://1.7.x`).
+
+### 📌 Key CRI Concepts
+
+- **Image Service** – Pulls, lists, and removes container images
+- **Runtime Service** – Creates, starts, stops, and removes containers
+- **PodSandbox** – Manages the pod-level isolation (network namespace, etc.)
+
+---
+
+## 🌐 CNI – Container Network Interface
+
+### 🔨 What is CNI?
+
+CNI is the **standard interface** for configuring networking in Linux containers. In Kubernetes, the CNI plugin is responsible for:
+
+- Assigning IP addresses to Pods
+- Setting up network routes between Pods across nodes
+- Configuring network namespaces
+
+### 🔄 How CNI Works
+
+```
+Pod Created  ──▶  kubelet calls CRI  ──▶  CRI calls CNI plugin  ──▶  Network configured for Pod
+```
+
+When a Pod is scheduled, the kubelet asks the container runtime to create a sandbox. The runtime invokes the configured CNI plugin to **set up networking** for that Pod.
+
+### ✅ Popular CNI Plugins
+
+| Plugin | Key Features |
+| ------------- | ------------------------------------------------------- |
+| **Calico** | Network policies, BGP routing, VXLAN/IPIP overlay |
+| **Flannel** | Simple VXLAN overlay, easy to set up |
+| **Weave Net** | Mesh networking, encryption support |
+| **Cilium** | eBPF-based, advanced security & observability |
+| **AWS VPC CNI**| Native AWS VPC networking for EKS pods |
+
+### 📌 Key CNI Concepts
+
+- **Pod CIDR** – The IP range assigned to Pods in the cluster
+- **Overlay Network** – Virtual network (VXLAN/IPIP) that spans across nodes
+- **Network Policy** – Rules that control ingress/egress traffic between Pods
+- **IPAM** – IP Address Management for assigning IPs to Pods
+
+### 🔍 CNI Plugin Comparison
+
+| Feature | Calico | Flannel | Cilium | Weave Net |
+| ------------------- | ------ | ------- | ------ | --------- |
+| Network Policies | ✅ | ❌ | ✅ | ✅ |
+| Encryption | ✅ | ❌ | ✅ | ✅ |
+| eBPF Support | ✅ | ❌ | ✅ | ❌ |
+| Ease of Setup | Medium | Easy | Medium | Easy |
+| Performance | High | Medium | High | Medium |
+
+---
+
+## 💾 CSI – Container Storage Interface
+
+### 🔨 What is CSI?
+
+CSI is the **standard interface** for exposing storage systems to containerized workloads in Kubernetes. It allows storage vendors to develop plugins **once** and have them work across any container orchestrator that supports CSI.
+
+Before CSI, storage drivers were part of the Kubernetes core (called **in-tree plugins**). CSI moved them **out-of-tree**, making them independently versioned and maintained.
+
+### 🔄 How CSI Works
+
+```
+PVC Created  ──▶  Kubernetes  ──▶  CSI Controller Plugin  ──▶  Storage Provider (EBS, EFS, etc.)
+                                         │
+Pod Scheduled  ──▶  kubelet  ──▶  CSI Node Plugin  ──▶  Mount volume to Pod
+```
+
+CSI has two main components:
+- **Controller Plugin** – Handles volume creation, deletion, attach/detach
+- **Node Plugin** – Handles mounting/unmounting volumes on the node
+
+### ✅ Popular CSI Drivers
+
+| Driver | Storage Type | Platform |
+| ---------------------- | -------------------- | -------------- |
+| **aws-ebs-csi-driver** | Block (EBS) | AWS |
+| **aws-efs-csi-driver** | File (EFS/NFS) | AWS |
+| **gce-pd-csi-driver** | Block (Persistent Disk) | GCP |
+| **azuredisk-csi-driver**| Block (Managed Disk) | Azure |
+| **nfs-subdir-external-provisioner** | File (NFS) | Any |
+| **longhorn** | Distributed Block | Any |
+
+### 📌 Key CSI Concepts
+
+- **StorageClass** – Defines the type of storage and provisioner to use
+- **PersistentVolume (PV)** – A piece of storage provisioned by the CSI driver
+- **PersistentVolumeClaim (PVC)** – A request for storage by a Pod
+- **VolumeSnapshot** – A point-in-time copy of a volume
+- **Dynamic Provisioning** – Automatic creation of PVs when a PVC is created
+- **Volume Expansion** – Ability to resize a PVC without downtime
+
+---
+
+## 🔄 CRI vs CNI vs CSI – Quick Comparison
+
+| Aspect | CRI | CNI | CSI |
+| -------------- | ----------------------- | ---------------------- | --------------------- |
+| **Purpose** | Container lifecycle | Pod networking | Storage management |
+| **Called by** | kubelet | Container runtime | Kubernetes controller |
+| **Scope** | Node-level | Cluster-wide | Cluster-wide |
+| **Examples** | containerd, CRI-O | Calico, Flannel, Cilium| EBS CSI, EFS CSI |
+| **Config location** | `/etc/containerd/` | `/etc/cni/net.d/` | StorageClass YAML |
+
+---
+
+## 🧪 Useful Commands Reference
+
+```bash
+# CRI – Check container runtime
+kubectl get nodes -o wide
+crictl info
+crictl ps
+
+# CNI – Check networking
+kubectl get pods -n kube-system          # Look for CNI pods (calico, flannel, etc.)
+cat /etc/cni/net.d/*.conf               # CNI configuration on the node
+
+# CSI – Check storage
+kubectl get sc                           # List StorageClasses
+kubectl get pv                           # List PersistentVolumes
+kubectl get pvc --all-namespaces         # List PersistentVolumeClaims
+kubectl get csidrivers                   # List installed CSI drivers
+
+# Network Policy
+kubectl get networkpolicy --all-namespaces
+kubectl describe networkpolicy <POLICY_NAME> -n <NAMESPACE>
+
+# Pod Security Admission
+kubectl get ns <NAMESPACE> --show-labels
+kubectl label ns <NAMESPACE> pod-security.kubernetes.io/enforce=restricted
+
+# Cluster Upgrade & Node Management
+kubectl get nodes                        # Check node versions
+kubectl cordon <NODE>                    # Mark node unschedulable
+kubectl drain <NODE> --ignore-daemonsets --delete-emptydir-data
+kubectl uncordon <NODE>                  # Mark node schedulable again
+kubectl get pdb --all-namespaces         # List Pod Disruption Budgets
+```
+
+---
+
+## 🔒 Network Policy – Hands-On Lab
+
+Network Policies allow you to control **Pod-to-Pod communication** at the network level. By default, all Pods in Kubernetes can communicate with each other. Network Policies let you **restrict** this behavior.
+
+> ⚠️ Network Policies require a CNI plugin that supports them (e.g., **Calico**, **Cilium**). Flannel does **NOT** support Network Policies.
+
+### 🔧 Step 1 – Setup the Environment
+
+```bash
+# Create namespaces
+kubectl create ns client
+kubectl create ns server
+
+# Deploy a busybox pod in the client namespace
+kubectl run busybox --image=busybox -n client -- sleep 3600
+
+# Deploy an nginx pod in the server namespace
+kubectl run nginx --image=nginx -n server
+
+# Wait for pods to be ready
+kubectl get pod -n client
+kubectl get pod -n server
+```
+
+### 🔧 Step 2 – Install Calico (Network Policy Support)
+
+```bash
+# Install Calico policy-only manifest (for clusters that already have a CNI for networking)
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico-policy-only.yaml
+
+# Verify Calico pods are running
+kubectl get pods -n kube-system | grep calico
+```
+
+### 🔧 Step 3 – Get the Server Pod IP
+
+```bash
+# Get the nginx pod IP in the server namespace
+kubectl get pod -n server -o wide
+```
+
+Note the **IP address** of the nginx pod (e.g., `10.244.1.5`). You will use this IP to test connectivity.
+
+### ✅ Step 4 – Test Pod-to-Pod Connection BEFORE Network Policy
+
+```bash
+# From the busybox pod in client namespace, curl the nginx pod IP
+kubectl exec -n client busybox -- wget --spider --timeout=3 <NGINX_POD_IP>
+```
+
+**Expected Result:** ✅ Connection **succeeds** – busybox can reach nginx because there is no Network Policy restricting traffic.
+
+---
+
+### 🔧 Step 5 – Apply Default Deny All NetworkPolicy
+
+This policy **blocks all incoming traffic** to all pods in the `server` namespace.
+
+```yaml
+# deny-all.yaml – Default Deny All Ingress in server namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: server
+spec:
+  podSelector: {}       # Applies to ALL pods in the namespace
+  policyTypes:
+  - Ingress              # Block all incoming traffic
+```
+
+```bash
+# Apply the deny-all policy
+kubectl apply -f deny-all.yaml
+
+# Verify the policy
+kubectl get networkpolicy -n server
+```
+
+### ❌ Step 6 – Test Pod-to-Pod Connection AFTER Deny All Policy
+
+```bash
+# Try to reach nginx again from the client namespace
+kubectl exec -n client busybox -- wget --spider --timeout=3 <NGINX_POD_IP>
+```
+
+**Expected Result:** ❌ Connection **fails** / **times out** – all ingress traffic to the `server` namespace is now blocked by the deny-all policy.
+
+---
+
+### 🔧 Step 7 – Allow Traffic from Client Namespace
+
+This policy **allows ingress traffic** to nginx only from pods in the `client` namespace.
+
+```yaml
+# allow-from-client.yaml – Allow traffic from client namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-client
+  namespace: server
+spec:
+  podSelector:
+    matchLabels:
+      run: nginx           # Applies to the nginx pod
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: client    # Allow from client namespace
+    ports:
+    - protocol: TCP
+      port: 80
+```
+
+```bash
+# Apply the allow policy
+kubectl apply -f allow-from-client.yaml
+
+# Verify both policies are in place
+kubectl get networkpolicy -n server
+```
+
+### ✅ Step 8 – Test Pod-to-Pod Connection AFTER Allow Policy
+
+```bash
+# Try to reach nginx again from the client namespace
+kubectl exec -n client busybox -- wget --spider --timeout=3 <NGINX_POD_IP>
+```
+
+**Expected Result:** ✅ Connection **succeeds** – the `allow-from-client` policy explicitly permits traffic from the `client` namespace to the nginx pod on port 80.
+
+### 🧹 Cleanup
+
+```bash
+kubectl delete ns client
+kubectl delete ns server
+```
+
+---
+
+## 🛡️ Pod Security Admission (PSA)
+
+### 🔨 What is Pod Security Admission?
+
+Pod Security Admission is a **built-in Kubernetes admission controller** that enforces Pod Security Standards at the namespace level. It replaced the deprecated PodSecurityPolicy (PSP) starting from Kubernetes v1.25.
+
+PSA defines **three security levels**:
+
+| Level | Description |
+| -------------- | ------------------------------------------------------------- |
+| **privileged** | No restrictions – allows everything (default) |
+| **baseline** | Prevents known privilege escalations (e.g., hostNetwork, hostPID) |
+| **restricted** | Heavily restricted – follows security best practices |
+
+### 🔄 PSA Modes
+
+Each security level can be applied in one of three **modes**:
+
+| Mode | Behavior |
+| ----------- | ------------------------------------------------------- |
+| **enforce** | Pods that violate the policy are **rejected** |
+| **audit** | Violations are recorded in the **audit log** but allowed |
+| **warn** | Violations show a **warning** to the user but are allowed |
+
+### 🔧 Step 1 – Create a Namespace with `enforce=restricted`
+
+```bash
+# Create a namespace with restricted Pod Security enforcement
+kubectl create ns restricted-ns
+
+# Label the namespace to enforce the restricted security standard
+kubectl label ns restricted-ns \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest \
+  pod-security.kubernetes.io/warn=restricted \
+  pod-security.kubernetes.io/warn-version=latest
+```
+
+```bash
+# Verify the labels
+kubectl get ns restricted-ns --show-labels
+```
+
+### ❌ Step 2 – Create a Pod that Violates the Policy
+
+The following pod runs as **root** and requests **privilege escalation**, which violates the `restricted` standard.
+
+```yaml
+# violation-pod.yaml – This pod WILL BE REJECTED
+apiVersion: v1
+kind: Pod
+metadata:
+  name: violation-pod
+  namespace: restricted-ns
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    securityContext:
+      runAsUser: 0               # Running as root – VIOLATION
+      allowPrivilegeEscalation: true   # Privilege escalation – VIOLATION
+```
+
+```bash
+# Try to create the violating pod
+kubectl apply -f violation-pod.yaml
+```
+
+**Expected Result:** ❌ The pod is **rejected** with an error message like:
+
+```
+Error from server (Forbidden): error when creating "violation-pod.yaml":
+pods "violation-pod" is forbidden: violates PodSecurity "restricted:latest":
+allowPrivilegeEscalation != false (container "nginx" must set securityContext.allowPrivilegeEscalation=false),
+runAsNonRoot != true (pod or container "nginx" must set securityContext.runAsNonRoot=true),
+seccompProfile (pod or container "nginx" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+```
+
+### ✅ Step 3 – Create a Pod that Complies with the Policy
+
+```yaml
+# compliant-pod.yaml – This pod WILL BE ACCEPTED
+apiVersion: v1
+kind: Pod
+metadata:
+  name: compliant-pod
+  namespace: restricted-ns
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+```
+
+```bash
+# Create the compliant pod
+kubectl apply -f compliant-pod.yaml
+
+# Verify it is running
+kubectl get pod -n restricted-ns
+```
+
+**Expected Result:** ✅ The pod is **created successfully** because it follows the `restricted` security standard.
+
+### 🧹 Cleanup
+
+```bash
+kubectl delete ns restricted-ns
+```
+
+---
+
+## 🔄 Kubernetes Cluster Upgrade – EKS 1.34 to 1.35
+
+### 🔨 Why Upgrade?
+
+Upgrading your Kubernetes cluster ensures you get:
+- 🔐 Security patches and vulnerability fixes
+- ✨ New features and API improvements
+- 📦 Updated and supported add-on versions
+- 🛡️ Continued vendor support (AWS EKS supports only the last 4 minor versions)
+
+> ⚠️ **Important:** Kubernetes supports upgrading **one minor version at a time** (e.g., 1.34 → 1.35). You cannot skip versions.
+
+---
+
+### 📋 Step-by-Step Upgrade Process
+
+### 1️⃣ Backup Everything
+
+Before any upgrade, take backups of critical resources.
+
+```bash
+# Backup all cluster resources
+kubectl get all --all-namespaces -o yaml > cluster-backup.yaml
+
+# Backup etcd (for self-managed clusters)
+# For EKS, AWS manages etcd backups automatically
+
+# Backup specific critical resources
+kubectl get configmaps --all-namespaces -o yaml > configmaps-backup.yaml
+kubectl get secrets --all-namespaces -o yaml > secrets-backup.yaml
+kubectl get pv -o yaml > pv-backup.yaml
+kubectl get pvc --all-namespaces -o yaml > pvc-backup.yaml
+```
+
+### 2️⃣ Read the Release Notes
+
+Always read the official release notes before upgrading.
+
+```
+📖 Kubernetes Changelog  : https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/
+📖 EKS Release Notes     : https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html
+```
+
+**Check for:**
+- ❌ Deprecated or removed APIs
+- ⚠️ Breaking changes in workload behavior
+- 📦 Required add-on version updates
+
+```bash
+# Check if your manifests use deprecated APIs
+kubectl get apiservices
+kubectl api-resources
+```
+
+### 3️⃣ Test the Upgrade in Staging First
+
+> 🚨 **Never upgrade production directly.** Always test in a staging/dev cluster first.
+
+```bash
+# Create a staging cluster matching production
+eksctl create cluster --name staging-cluster --version 1.35 --region ap-southeast-1
+
+# Deploy your workloads to staging and run tests
+# Validate application behavior, health checks, and integrations
+```
+
+### 4️⃣ Setup Pod Disruption Budgets (PDB)
+
+A **PodDisruptionBudget** ensures that a minimum number of pods remain available during voluntary disruptions like node drains, upgrades, and scaling events.
+
+#### 🔨 What is a PDB?
+
+| Field | Description |
+| ------------------- | ---------------------------------------------------- |
+| `minAvailable` | Minimum number of pods that must remain running |
+| `maxUnavailable` | Maximum number of pods that can be unavailable |
+| `selector` | Which pods this PDB applies to |
+
+> ⚠️ Use **either** `minAvailable` **or** `maxUnavailable`, not both.
+
+#### 🔧 Example YAML – PodDisruptionBudget
+
+```yaml
+# pdb.yaml – Ensure at least 1 replica is always available during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nginx-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nginx
+---
+# Deployment that the PDB protects
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+```
+
+```bash
+# Apply the PDB and Deployment
+kubectl apply -f pdb.yaml
+
+# Verify PDB
+kubectl get pdb
+kubectl describe pdb nginx-pdb
+```
+
+#### 🔧 Example – PDB with maxUnavailable
+
+```yaml
+# pdb-max-unavailable.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nginx-pdb-max
+spec:
+  maxUnavailable: 1        # At most 1 pod can be down at a time
+  selector:
+    matchLabels:
+      app: nginx
+```
+
+### 5️⃣ Update the Control Plane
+
+For **EKS**, update the control plane version using the AWS CLI or `eksctl`.
+
+```bash
+# Check current cluster version
+eksctl get cluster --name my-cluster --region ap-southeast-1
+
+# Upgrade EKS control plane to 1.35
+eksctl upgrade cluster --name my-cluster --version 1.35 --region ap-southeast-1 --approve
+
+# Wait for the upgrade to complete and verify
+eksctl get cluster --name my-cluster --region ap-southeast-1
+kubectl version --short
+```
+
+> ⏱️ Control plane upgrade takes approximately 20-30 minutes. During this time, the **API server** may have brief downtime but **running workloads are not affected**.
+
+### 6️⃣ Create New Worker Nodes Compatible with 1.35
+
+Create a **new node group** running Kubernetes 1.35, then migrate workloads from old nodes.
+
+```bash
+# Create a new managed node group with version 1.35
+eksctl create nodegroup \
+  --cluster my-cluster \
+  --name ng-1-35 \
+  --node-type t3.medium \
+  --nodes 3 \
+  --nodes-min 2 \
+  --nodes-max 5 \
+  --region ap-southeast-1
+
+# Verify new nodes are Ready
+kubectl get nodes
+```
+
+### 7️⃣ Cordon, Drain Old Nodes & Reschedule Pods to New Nodes
+
+#### 📌 Understanding Cordon, Drain, and Uncordon
+
+| Command | What it Does |
+| ---------------------- | ------------------------------------------------------------- |
+| `kubectl cordon` | Marks a node as **unschedulable** – no new pods will be placed on it |
+| `kubectl drain` | **Evicts all pods** from a node (respects PDBs) and cordons it |
+| `kubectl uncordon` | Marks a node as **schedulable** again |
+
+```bash
+# List all nodes and identify old 1.34 nodes
+kubectl get nodes
+
+# Step 1: Cordon the old node (prevent new pods from being scheduled)
+kubectl cordon <OLD_NODE_NAME>
+
+# Verify the node shows SchedulingDisabled
+kubectl get nodes
+
+# Step 2: Drain the old node (evict all pods, respects PDBs)
+kubectl drain <OLD_NODE_NAME> \
+  --ignore-daemonsets \
+  --delete-emptydir-data \
+  --grace-period=60
+
+# Step 3: Verify pods are rescheduled to new nodes
+kubectl get pods -o wide --all-namespaces
+
+# Step 4: (If needed) Uncordon a node to make it schedulable again
+kubectl uncordon <NODE_NAME>
+```
+
+> ⚠️ `kubectl drain` will **fail** if evicting a pod would violate its PDB. This is why Step 4 (setting up PDBs) is critical before draining.
+
+```bash
+# Repeat for each old node
+kubectl drain <OLD_NODE_2> --ignore-daemonsets --delete-emptydir-data
+kubectl drain <OLD_NODE_3> --ignore-daemonsets --delete-emptydir-data
+
+# Once all pods are moved, delete the old node group
+eksctl delete nodegroup \
+  --cluster my-cluster \
+  --name ng-1-34 \
+  --region ap-southeast-1
+```
+
+### 8️⃣ Upgrade the Add-On Versions
+
+After the control plane and nodes are upgraded, update the cluster add-ons to versions compatible with 1.35.
+
+```bash
+# List current add-ons
+eksctl get addons --cluster my-cluster --region ap-southeast-1
+
+# Update CoreDNS
+eksctl update addon --name coredns --cluster my-cluster --region ap-southeast-1 --force
+
+# Update kube-proxy
+eksctl update addon --name kube-proxy --cluster my-cluster --region ap-southeast-1 --force
+
+# Update VPC CNI
+eksctl update addon --name vpc-cni --cluster my-cluster --region ap-southeast-1 --force
+
+# Update EBS CSI Driver (if installed)
+eksctl update addon --name aws-ebs-csi-driver --cluster my-cluster --region ap-southeast-1 --force
+
+# Verify all add-ons are updated
+eksctl get addons --cluster my-cluster --region ap-southeast-1
+```
+
+### ✅ Post-Upgrade Verification
+
+```bash
+# Verify cluster version
+kubectl version --short
+
+# Verify all nodes are running 1.35
+kubectl get nodes
+
+# Verify all system pods are healthy
+kubectl get pods -n kube-system
+
+# Verify all workloads are running
+kubectl get pods --all-namespaces
+
+# Check for any issues
+kubectl get events --all-namespaces --sort-by='.lastTimestamp' | tail -20
+```
+
+### 📋 Upgrade Checklist Summary
+
+| Step | Action | Status |
+| ---- | ----------------------------------------------- | ------ |
+| 1 | Backup all resources | ⬜ |
+| 2 | Read release notes & check deprecated APIs | ⬜ |
+| 3 | Test upgrade in staging cluster | ⬜ |
+| 4 | Setup Pod Disruption Budgets | ⬜ |
+| 5 | Upgrade EKS Control Plane to 1.35 | ⬜ |
+| 6 | Create new worker nodes (1.35 node group) | ⬜ |
+| 7 | Cordon & Drain old nodes, reschedule pods | ⬜ |
+| 8 | Upgrade add-on versions (CoreDNS, kube-proxy, VPC CNI) | ⬜ |
+
+---
+
+# 🎓 Kubernetes Part 11 – CKA Certification Guide (Final Chapter)
+
+
+## 📚 What You Will Learn
+
+This is the **final chapter** of our Kubernetes learning series. Now that you have hands-on experience with Kubernetes on **AWS EKS** (Parts 1–10), it's time to get **officially certified**. The **Certified Kubernetes Administrator (CKA)** exam validates your ability to manage production-grade Kubernetes clusters.
+
+✅ Understand the CKA exam format, platform, and rules
+✅ Know the complete CKA syllabus and domain weights
+✅ Map what you've already learned (Parts 1–10) to the CKA syllabus
+✅ Learn YAML tips, tricks, and shortcuts — **you do NOT need to memorize YAML**
+✅ Generate YAML quickly using `kubectl` imperative commands during the exam
+✅ Get a curated list of reference sites, practice platforms, and documentation
+✅ Understand how EKS experience translates to the CKA exam environment
+✅ Practice with real exam-style scenario questions
+
+---
+
+## 🏛️ What is the CKA Certification?
+
+The **Certified Kubernetes Administrator (CKA)** is a globally recognized certification offered by the **Cloud Native Computing Foundation (CNCF)** in partnership with the **Linux Foundation**.
+
+| Detail | Info |
+| --------------------- | ------------------------------------------------------------- |
+| **Full Name** | Certified Kubernetes Administrator |
+| **Provider** | CNCF / Linux Foundation |
+| **Exam Type** | Performance-based (hands-on, NOT multiple choice) |
+| **Duration** | 2 hours |
+| **Passing Score** | 66% |
+| **Number of Questions**| 15–20 hands-on tasks |
+| **Exam Platform** | PSI Secure Browser (remote proctored) |
+| **Cost** | $395 USD (includes one free retake) |
+| **Validity** | 2 years from the date of certification |
+| **Kubernetes Version** | The exam always uses a recent stable version (check CNCF site) |
+| **OS in Exam** | Ubuntu Linux (terminal-based) |
+
+---
+
+## 🖥️ Exam Platform & Environment – How the Exam Works
+
+### 🔨 Exam Platform: PSI Secure Browser
+
+The CKA exam is conducted online through the **PSI Secure Browser**. You take it from your own computer — there is **no test center**.
+
+#### 📋 Before the Exam
+
+| Requirement | Detail |
+| ----------------------------- | ------------------------------------------------- |
+| **Valid Government ID** | Passport or national ID card |
+| **Webcam + Microphone** | Built-in or external — must be working |
+| **Stable Internet** | Minimum 1 Mbps upload/download |
+| **Clean Desk Policy** | No books, notes, phones, or secondary monitors |
+| **PSI Secure Browser** | Must be installed before exam day |
+| **System Check** | Run the PSI compatibility check 24 hours before |
+
+#### 💻 During the Exam
+
+| Feature | Detail |
+| ----------------------------- | -------------------------------------------------- |
+| **Environment** | Linux terminal (Ubuntu) with `kubectl` pre-installed |
+| **Multiple Clusters** | You will be asked to switch between clusters using `kubectl config use-context` |
+| **Root Access** | You have `sudo` access on the nodes |
+| **Copy-Paste** | Allowed within the exam terminal |
+| **Notepad** | A built-in notepad is available in the exam interface |
+| **Browser Tab** | **ONE extra tab** is allowed for Kubernetes documentation |
+
+### ⚠️ EKS vs CKA Exam Environment – Key Difference
+
+Since you studied Kubernetes on **AWS EKS**, here's what changes in the CKA exam:
+
+| Feature | AWS EKS (What You Learned) | CKA Exam (What You'll Face) |
+| --------------------- | -------------------------------------- | ----------------------------------------- |
+| **Cluster Setup** | Managed by AWS (`eksctl`) | kubeadm-based vanilla clusters |
+| **Control Plane** | AWS manages it (hidden from you) | You manage etcd, API server, scheduler |
+| **Networking** | AWS VPC CNI plugin | Various CNI plugins (Calico, Flannel) |
+| **Storage** | EBS/EFS CSI drivers | hostPath, emptyDir, NFS, PV/PVC |
+| **Node Management** | Managed Node Groups | Manual `kubeadm join`, `kubectl drain` |
+| **Upgrades** | `eksctl upgrade cluster` | `kubeadm upgrade` (manual process) |
+| **RBAC** | IAM + Kubernetes RBAC | Pure Kubernetes RBAC (no IAM) |
+| **etcd** | Hidden, managed by AWS | You must backup/restore etcd manually |
+
+> 💡 **Good News:** All the core Kubernetes concepts you learned (Pods, Deployments, Services, ConfigMaps, Secrets, PV/PVC, Network Policies, RBAC, etc.) are **100% the same** in both EKS and the exam. Only the cluster management layer is different.
+
+---
+
+## 📋 CKA Exam Syllabus & Domain Weights
+
+The CKA exam covers **5 domains**. Each domain has a specific weight in the overall score.
+
+### 📊 Domain Breakdown
+
+| Domain | Weight | Topics |
+| ---- | ------------------------------------------ | ------ |
+| 1 | **Cluster Architecture, Installation & Configuration** | 25% |
+| 2 | **Workloads & Scheduling** | 15% |
+| 3 | **Services & Networking** | 20% |
+| 4 | **Storage** | 10% |
+| 5 | **Troubleshooting** | 30% |
+
+> 🎯 **Troubleshooting (30%)** is the highest weighted domain. Practice debugging broken clusters, pods, and services extensively.
+
+---
+
+### 1️⃣ Cluster Architecture, Installation & Configuration (25%)
+
+| Topic | What to Know |
+| ----------------------------------- | ------------------------------------------------------ |
+| RBAC (Role, ClusterRole, Bindings) | Create Roles, bind to users/service accounts |
+| kubeadm cluster setup | `kubeadm init`, `kubeadm join`, `kubeadm upgrade` |
+| etcd backup & restore | `etcdctl snapshot save/restore` |
+| Manage certificates | Know where certs live (`/etc/kubernetes/pki/`) |
+| Cluster upgrade (kubeadm) | Upgrade control plane + worker nodes step-by-step |
+| Network policies | Allow/deny traffic between pods (you practiced this!) |
+
+**What you already know from this course:**
+- ✅ RBAC basics (Part 5)
+- ✅ Network Policies (Part 10)
+- ✅ Cluster upgrade concepts (Part 10)
+
+**What to additionally study:**
+- ❗ `kubeadm init / join / upgrade` (EKS hides this from you)
+- ❗ etcd backup and restore with `etcdctl`
+- ❗ TLS certificate management
+
+---
+
+### 2️⃣ Workloads & Scheduling (15%)
+
+| Topic | What to Know |
+| ----------------------------------- | ------------------------------------------------------ |
+| Deployments, ReplicaSets, DaemonSets | Create, scale, update, rollback |
+| Jobs & CronJobs | One-time and scheduled tasks |
+| ConfigMaps & Secrets | Mount as volumes or inject as env vars |
+| Resource requests & limits | CPU/memory requests and limits |
+| Static Pods | Create pods managed directly by kubelet |
+| Node selectors & affinity | Schedule pods to specific nodes |
+| Taints & tolerations | Prevent/allow pods on specific nodes |
+| Pod Disruption Budgets | minAvailable, maxUnavailable |
+
+**What you already know from this course:**
+- ✅ Deployments, ReplicaSets, DaemonSets (Parts 3–6)
+- ✅ Jobs & CronJobs (Part 9)
+- ✅ ConfigMaps & Secrets (Part 5)
+- ✅ Resource requests & limits (Part 9)
+- ✅ Taints & tolerations (Part 6)
+- ✅ Pod Disruption Budgets (Part 10)
+
+**What to additionally study:**
+- ❗ Static Pods (`/etc/kubernetes/manifests/`)
+- ❗ Node affinity/anti-affinity rules
+
+---
+
+### 3️⃣ Services & Networking (20%)
+
+| Topic | What to Know |
+| ----------------------------------- | ------------------------------------------------------ |
+| ClusterIP, NodePort, LoadBalancer | Service types and when to use each |
+| Ingress & Ingress Controllers | HTTP routing, path-based routing |
+| CoreDNS | How DNS works inside a cluster |
+| Network Policies | Ingress/egress rules between pods and namespaces |
+| CNI plugin basics | Understand what CNI does (don't need to install) |
+
+**What you already know from this course:**
+- ✅ Services – ClusterIP, NodePort, LoadBalancer (Parts 4–5)
+- ✅ Ingress with ALB (Part 8)
+- ✅ Network Policies (Part 10)
+- ✅ CNI concepts (Part 10)
+- ✅ ExternalName services (Part 9)
+
+**What to additionally study:**
+- ❗ CoreDNS troubleshooting
+- ❗ Ingress with NGINX Ingress Controller (not ALB)
+
+---
+
+### 4️⃣ Storage (10%)
+
+| Topic | What to Know |
+| ----------------------------------- | ------------------------------------------------------ |
+| PersistentVolumes (PV) | Create PV with hostPath, NFS |
+| PersistentVolumeClaims (PVC) | Bind PVC to PV, use in Pods |
+| StorageClasses | Dynamic provisioning |
+| Volume types | emptyDir, hostPath, configMap, secret |
+| Volume expansion | Resize PVC |
+
+**What you already know from this course:**
+- ✅ PV/PVC concepts (Parts 5–6)
+- ✅ CSI and StorageClass concepts (Part 10)
+- ✅ StatefulSet with volumes (Part 9)
+
+**What to additionally study:**
+- ❗ `hostPath` volumes (used frequently in the exam instead of EBS/EFS)
+- ❗ Manual PV creation (no dynamic provisioning in some questions)
+
+---
+
+### 5️⃣ Troubleshooting (30%) ⭐ Most Important
+
+| Topic | What to Know |
+| ----------------------------------- | ------------------------------------------------------ |
+| Application failures | Debug CrashLoopBackOff, ImagePullBackOff, pending pods |
+| Cluster component failures | Fix broken kubelet, API server, scheduler, etcd |
+| Networking issues | Debug service connectivity, DNS resolution |
+| Node troubleshooting | Fix NotReady nodes, check kubelet logs |
+| Log collection | `kubectl logs`, `kubectl describe`, `journalctl` |
+
+**Key debugging commands you MUST master:**
+
+```bash
+# Pod debugging
+kubectl describe pod <POD_NAME>
+kubectl logs <POD_NAME>
+kubectl logs <POD_NAME> -c <CONTAINER_NAME>    # Multi-container pods
+kubectl logs <POD_NAME> --previous              # Logs from crashed container
+kubectl exec -it <POD_NAME> -- /bin/sh
+
+# Node debugging
+kubectl describe node <NODE_NAME>
+ssh <NODE_IP>
+sudo systemctl status kubelet
+sudo journalctl -u kubelet -f
+
+# Service/Networking debugging
+kubectl get endpoints <SERVICE_NAME>
+kubectl run tmp --image=busybox --rm -it -- wget -qO- <SERVICE_NAME>:<PORT>
+kubectl exec -it <POD> -- nslookup <SERVICE_NAME>
+
+# Cluster component debugging
+kubectl get componentstatuses              # Deprecated but may appear
+kubectl get pods -n kube-system
+sudo cat /var/log/containers/*.log
+```
+
+---
+
+## ⌨️ YAML Tips & Tricks – You Do NOT Need to Memorize YAML
+
+> 🚨 **This is the most important section for CKA exam preparation.** You do NOT need to memorize YAML manifests. The exam allows access to the official Kubernetes documentation, and `kubectl` has powerful commands to generate YAML for you.
+
+### 🔧 Method 1 – Generate YAML with `kubectl` Imperative Commands (`--dry-run=client -o yaml`)
+
+This is the **fastest way** to create YAML during the exam. Use `kubectl run` or `kubectl create` with the `--dry-run=client -o yaml` flags to generate a YAML template, then edit it.
+
+```bash
+# Generate a Pod YAML
+kubectl run nginx --image=nginx --dry-run=client -o yaml > pod.yaml
+
+# Generate a Deployment YAML
+kubectl create deployment nginx-dep --image=nginx --replicas=3 --dry-run=client -o yaml > deployment.yaml
+
+# Generate a Service YAML (ClusterIP)
+kubectl expose pod nginx --port=80 --target-port=80 --dry-run=client -o yaml > service.yaml
+
+# Generate a NodePort Service YAML
+kubectl expose pod nginx --port=80 --type=NodePort --dry-run=client -o yaml > nodeport-svc.yaml
+
+# Generate a Job YAML
+kubectl create job my-job --image=busybox --dry-run=client -o yaml -- echo "Hello" > job.yaml
+
+# Generate a CronJob YAML
+kubectl create cronjob my-cron --image=busybox --schedule="*/5 * * * *" --dry-run=client -o yaml -- echo "Hello" > cronjob.yaml
+
+# Generate a ConfigMap YAML
+kubectl create configmap my-config --from-literal=key1=value1 --dry-run=client -o yaml > configmap.yaml
+
+# Generate a Secret YAML
+kubectl create secret generic my-secret --from-literal=password=abc123 --dry-run=client -o yaml > secret.yaml
+
+# Generate a ServiceAccount YAML
+kubectl create serviceaccount my-sa --dry-run=client -o yaml > sa.yaml
+
+# Generate a Namespace YAML
+kubectl create namespace my-ns --dry-run=client -o yaml > ns.yaml
+
+# Generate a Role YAML
+kubectl create role my-role --verb=get,list,watch --resource=pods --dry-run=client -o yaml > role.yaml
+
+# Generate a RoleBinding YAML
+kubectl create rolebinding my-binding --role=my-role --user=john --dry-run=client -o yaml > rolebinding.yaml
+
+# Generate a ClusterRole YAML
+kubectl create clusterrole my-clusterrole --verb=get,list --resource=nodes --dry-run=client -o yaml > clusterrole.yaml
+
+# Generate a ClusterRoleBinding YAML
+kubectl create clusterrolebinding my-binding --clusterrole=my-clusterrole --user=admin --dry-run=client -o yaml > crb.yaml
+
+# Generate a NetworkPolicy YAML (start from docs, no imperative shortcut)
+
+# Generate a PodDisruptionBudget YAML
+kubectl create pdb my-pdb --min-available=1 --selector=app=nginx --dry-run=client -o yaml > pdb.yaml
+
+# Generate an Ingress YAML
+kubectl create ingress my-ingress --rule="host.com/path=svc:80" --dry-run=client -o yaml > ingress.yaml
+```
+
+### 🔧 Method 2 – Use `kubectl explain` to Look Up YAML Fields
+
+During the exam, if you forget a field name or the structure of a resource, use `kubectl explain`.
+
+```bash
+# Top-level fields of a Pod
+kubectl explain pod.spec
+
+# Nested fields – containers
+kubectl explain pod.spec.containers
+
+# Volume mounts
+kubectl explain pod.spec.containers.volumeMounts
+
+# Deployment strategy
+kubectl explain deployment.spec.strategy
+
+# PersistentVolumeClaim spec
+kubectl explain pvc.spec
+
+# NetworkPolicy spec
+kubectl explain networkpolicy.spec
+
+# Get the FULL structure recursively
+kubectl explain pod --recursive | head -80
+
+# Search for a specific field
+kubectl explain pod --recursive | grep -i "tolerations" -A 5
+```
+
+### 🔧 Method 3 – Copy YAML from the Official Kubernetes Documentation
+
+During the exam, you are allowed **ONE browser tab** open to the official docs:
+
+```
+✅ Allowed: https://kubernetes.io/docs/
+✅ Allowed: https://kubernetes.io/blog/
+✅ Allowed: https://helm.sh/docs/
+```
+
+**Pro tip:** Use the **search bar** on kubernetes.io/docs to find YAML examples quickly. Almost every resource type has a ready-to-copy YAML example.
+
+**Fastest pages to bookmark:**
+
+| Resource | Documentation Page |
+| ---------------------- | ------------------------------------------------------------------ |
+| Pod | `kubernetes.io/docs/concepts/workloads/pods/` |
+| Deployment | `kubernetes.io/docs/concepts/workloads/controllers/deployment/` |
+| Services | `kubernetes.io/docs/concepts/services-networking/service/` |
+| Ingress | `kubernetes.io/docs/concepts/services-networking/ingress/` |
+| PV & PVC | `kubernetes.io/docs/concepts/storage/persistent-volumes/` |
+| Network Policy | `kubernetes.io/docs/concepts/services-networking/network-policies/` |
+| RBAC | `kubernetes.io/docs/reference/access-authn-authz/rbac/` |
+| etcd backup | `kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/` |
+| kubeadm upgrade | `kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/` |
+| Taints & Tolerations | `kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/` |
+| kubectl Cheat Sheet | `kubernetes.io/docs/reference/kubectl/cheatsheet/` |
+
+### 🔧 Method 4 – Useful `kubectl` Shortcuts for Speed
+
+Speed matters in the CKA exam. Set up these aliases at the **start of the exam**.
+
+```bash
+# Add these aliases at the start of the exam
+alias k=kubectl
+alias kn='kubectl config set-context --current --namespace'
+alias kgp='kubectl get pods'
+alias kgs='kubectl get svc'
+alias kgn='kubectl get nodes'
+alias kd='kubectl describe'
+alias kaf='kubectl apply -f'
+alias kdel='kubectl delete'
+
+# Enable auto-completion (usually pre-enabled in the exam)
+source <(kubectl completion bash)
+complete -o default -F __start_kubectl k
+
+# Set default editor (vim is pre-installed)
+export EDITOR=vim
+```
+
+#### ⌨️ Essential Vim Commands for the Exam
+
+```
+i          → Enter insert mode (start typing)
+Esc        → Exit insert mode
+:wq        → Save and quit
+:q!        → Quit without saving
+dd         → Delete a line
+yy         → Copy a line
+p          → Paste below current line
+u          → Undo
+/search    → Search for text
+n          → Next search result
+:set nu    → Show line numbers
+:%s/old/new/g → Find and replace all
+gg         → Go to top of file
+G          → Go to bottom of file
+```
+
+#### 🔧 Quick YAML Editing Tips
+
+```bash
+# Quickly edit a running resource
+kubectl edit deployment nginx-dep
+
+# Patch a resource without editing the full YAML
+kubectl patch deployment nginx-dep -p '{"spec":{"replicas":5}}'
+
+# Scale without editing YAML
+kubectl scale deployment nginx-dep --replicas=5
+
+# Set image without editing YAML
+kubectl set image deployment/nginx-dep nginx=nginx:1.25
+
+# Add labels without YAML
+kubectl label pod nginx app=web
+
+# Add annotations without YAML
+kubectl annotate pod nginx description="my pod"
+
+# Taint a node without YAML
+kubectl taint nodes node1 key=value:NoSchedule
+
+# Remove a taint
+kubectl taint nodes node1 key=value:NoSchedule-
+```
+
+---
+
+## 📝 CKA Practice Scenarios
+
+These scenarios mirror real CKA exam questions. Practice each one in a local cluster (minikube or kind).
+
+### 📌 Scenario 1 – Create a Pod with Specific Requirements
+
+> Create a pod named `web-pod` in the `production` namespace using the `nginx:1.25` image. The pod should have a CPU request of `250m`, a memory limit of `256Mi`, and a label `tier=frontend`.
+
+**💡 How to approach:** Use `--dry-run=client -o yaml` to generate the base YAML, then edit only what's needed.
+
+```bash
+# Step 1: Create the namespace
+kubectl create namespace production
+
+# Step 2: Generate the Pod YAML using --dry-run (DO NOT memorize YAML!)
+kubectl run web-pod -n production --image=nginx:1.25 \
+  --labels=tier=frontend \
+  --dry-run=client -o yaml > web-pod.yaml
+```
+
+This generates a complete Pod YAML. Now you only need to add the `resources` block.
+
+```bash
+# Step 3: If you forget the resources field structure, use kubectl explain
+kubectl explain pod.spec.containers.resources
+kubectl explain pod.spec.containers.resources.requests
+```
+
+```bash
+# Step 4: Edit the generated YAML to add resources
+vi web-pod.yaml
+```
+
+Add the following under `containers`:
+
+```yaml
+        resources:
+          requests:
+            cpu: "250m"
+          limits:
+            memory: "256Mi"
+```
+
+```bash
+# Step 5: Apply and verify
+kubectl apply -f web-pod.yaml
+kubectl get pod web-pod -n production
+kubectl describe pod web-pod -n production
+```
+
+---
+
+### 📌 Scenario 2 – RBAC: Create a Role and Bind it to a User
+
+> Create a Role named `pod-reader` in the `dev` namespace that allows `get`, `list`, and `watch` on Pods. Bind it to a user named `jane`.
+
+**💡 How to approach:** RBAC resources can be created **entirely with imperative commands** – no YAML file needed at all!
+
+```bash
+# Step 1: Create the namespace
+kubectl create namespace dev
+
+# Step 2: Create the Role (imperative – no YAML needed!)
+kubectl create role pod-reader -n dev --verb=get,list,watch --resource=pods
+
+# Step 3: Create the RoleBinding (imperative – no YAML needed!)
+kubectl create rolebinding pod-reader-binding -n dev --role=pod-reader --user=jane
+
+# Step 4: Verify – can jane list pods?
+kubectl auth can-i list pods -n dev --as=jane       # Should return: yes
+kubectl auth can-i delete pods -n dev --as=jane     # Should return: no
+```
+
+**💡 If the question asks for YAML instead:**
+
+```bash
+# Generate Role YAML
+kubectl create role pod-reader -n dev --verb=get,list,watch --resource=pods \
+  --dry-run=client -o yaml > role.yaml
+
+# Generate RoleBinding YAML
+kubectl create rolebinding pod-reader-binding -n dev --role=pod-reader --user=jane \
+  --dry-run=client -o yaml > rolebinding.yaml
+```
+
+---
+
+### 📌 Scenario 3 – Expose a Deployment as a NodePort Service
+
+> Create a deployment named `httpd-deploy` with 3 replicas using the `httpd:2.4` image. Expose it as a NodePort service on port 80.
+
+**💡 How to approach:** Both the Deployment and Service can be created with imperative commands.
+
+```bash
+# Step 1: Create the deployment (imperative)
+kubectl create deployment httpd-deploy --image=httpd:2.4 --replicas=3
+
+# Step 2: Expose it as a NodePort service (imperative)
+kubectl expose deployment httpd-deploy --type=NodePort --port=80
+
+# Step 3: Verify
+kubectl get deployment httpd-deploy
+kubectl get svc httpd-deploy
+kubectl get pods -l app=httpd-deploy
+```
+
+**💡 If you need to generate the YAML files instead:**
+
+```bash
+# Generate Deployment YAML
+kubectl create deployment httpd-deploy --image=httpd:2.4 --replicas=3 \
+  --dry-run=client -o yaml > deployment.yaml
+
+# Generate Service YAML
+kubectl expose deployment httpd-deploy --type=NodePort --port=80 \
+  --dry-run=client -o yaml > service.yaml
+```
+
+---
+
+### 📌 Scenario 4 – etcd Backup and Restore
+
+> Take a snapshot of etcd and save it to `/opt/etcd-backup.db`. Then restore it.
+
+> 🚨 **Do you need to memorize these long etcd commands? NO!**
+> The etcd backup/restore commands are long and have many flags. You do **NOT** need to memorize them. Here's how to find them during the exam.
+
+**💡 How to find the etcd commands during the exam:**
+
+```
+Step 1: Open your allowed browser tab → https://kubernetes.io/docs/
+Step 2: Search for "etcd backup" in the search bar
+Step 3: Go to → "Operating etcd clusters for Kubernetes"
+        (kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)
+Step 4: Scroll to "Backing up an etcd cluster" → the exact commands are there!
+```
+
+**💡 How to find the certificate paths (you don't memorize these either):**
+
+```bash
+# The etcd pod manifest contains ALL the certificate paths you need!
+# Just read it:
+cat /etc/kubernetes/manifests/etcd.yaml
+
+# Look for these flags in the etcd container command:
+# --cert-file       → this is your --cert
+# --key-file        → this is your --key
+# --trusted-ca-file → this is your --cacert
+# --listen-client-urls → this is your --endpoints
+```
+
+**Now run the backup using values from the manifest:**
+
+```bash
+# Backup etcd (copy the command from kubernetes.io docs, fill in cert paths from the manifest)
+ETCDCTL_API=3 etcdctl snapshot save /opt/etcd-backup.db \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key
+
+# Verify the snapshot
+ETCDCTL_API=3 etcdctl snapshot status /opt/etcd-backup.db --write-table
+
+# Restore etcd (to a new data directory)
+ETCDCTL_API=3 etcdctl snapshot restore /opt/etcd-backup.db \
+  --data-dir=/var/lib/etcd-restored
+```
+
+**After restore, update the etcd manifest:**
+
+```bash
+# Edit the etcd static pod manifest
+vi /etc/kubernetes/manifests/etcd.yaml
+
+# Change the hostPath volume from:
+#   path: /var/lib/etcd
+# To:
+#   path: /var/lib/etcd-restored
+
+# The kubelet will automatically restart etcd with the restored data
+```
+
+> 📝 **Summary:** Don't memorize → Read `/etc/kubernetes/manifests/etcd.yaml` for cert paths, copy the command template from kubernetes.io/docs, fill in the values.
+
+---
+
+### 📌 Scenario 5 – Troubleshoot a Broken Node
+
+> A worker node `node01` is in `NotReady` state. Fix it.
+
+**💡 How to approach:** Troubleshooting follows a fixed pattern. No YAML needed – it's all commands.
+
+```bash
+# Step 1: Check node status and look for the reason
+kubectl describe node node01
+# Look at "Conditions" section → what condition is False/Unknown?
+
+# Step 2: SSH into the broken node
+ssh node01
+
+# Step 3: Check kubelet status (kubelet is the most common cause)
+sudo systemctl status kubelet
+
+# Step 4: If kubelet is stopped/dead, start and enable it
+sudo systemctl start kubelet
+sudo systemctl enable kubelet
+
+# Step 5: If kubelet is running but erroring, check the logs
+sudo journalctl -u kubelet -f
+# Read the error messages carefully – they usually tell you exactly what's wrong
+
+# Step 6: Common fixes based on error messages
+# ERROR: "unable to load client CA file"
+#   → Fix the CA cert path in /var/lib/kubelet/config.yaml
+
+# ERROR: "failed to connect to apiserver"
+#   → Check the API server address in kubelet config
+
+# ERROR: kubelet just won't start
+#   → sudo systemctl daemon-reload
+#   → sudo systemctl restart kubelet
+```
+
+---
+
+### 📌 Scenario 6 – Cluster Upgrade with kubeadm
+
+> Upgrade the control plane node from Kubernetes 1.31.0 to 1.32.0 using kubeadm.
+
+> 🚨 **Do you need to memorize the upgrade steps? NO!** Search for **"kubeadm upgrade"** in the Kubernetes docs.
+> `kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/`
+
+**💡 The docs give you the exact commands. Here's the flow:**
+
+```bash
+# Step 1: Drain the control plane node (stop scheduling + evict pods)
+kubectl drain controlplane --ignore-daemonsets
+
+# Step 2: Upgrade kubeadm to the target version
+sudo apt-get update
+sudo apt-get install -y kubeadm=1.32.0-*
+
+# Step 3: Check what the upgrade will do
+sudo kubeadm upgrade plan
+
+# Step 4: Apply the upgrade
+sudo kubeadm upgrade apply v1.32.0
+
+# Step 5: Upgrade kubelet and kubectl
+sudo apt-get install -y kubelet=1.32.0-* kubectl=1.32.0-*
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+# Step 6: Make the node schedulable again
+kubectl uncordon controlplane
+
+# Step 7: Verify
+kubectl get nodes
+```
+
+---
+
+### 📌 Scenario 7 – Network Policy
+
+> In the `secure` namespace, create a NetworkPolicy that allows ingress traffic to pods with label `app=db` only from pods with label `app=api` on port 3306.
+
+> 🚨 **NetworkPolicy has NO imperative shortcut.** You must write YAML for this. But you can **copy the template from the Kubernetes docs:**
+> Search: `kubernetes.io/docs/concepts/services-networking/network-policies/`
+
+**💡 How to approach:** Copy the example from the docs, then modify the labels, namespace, and ports.
+
+```bash
+# Step 1: Create the namespace
+kubectl create namespace secure
+
+# Step 2: Use kubectl explain to check the structure if needed
+kubectl explain networkpolicy.spec
+kubectl explain networkpolicy.spec.ingress
+```
+
+```bash
+# Step 3: Create the YAML file (copy template from docs, modify it)
+vi netpol.yaml
+```
+
+```yaml
+# netpol.yaml – copied from docs, modified for our requirements
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-db
+  namespace: secure
+spec:
+  podSelector:
+    matchLabels:
+      app: db
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api
+    ports:
+    - protocol: TCP
+      port: 3306
+```
+
+```bash
+# Step 4: Apply and verify
+kubectl apply -f netpol.yaml
+kubectl get networkpolicy -n secure
+kubectl describe networkpolicy allow-api-to-db -n secure
+```
+
+---
+
+### 📌 Scenario 8 – Persistent Volume and Claim
+
+> Create a PersistentVolume named `pv-log` of `1Gi` using `hostPath` at `/var/log/app`. Create a PVC named `pvc-log` that binds to it. Mount it in a pod.
+
+> 🚨 **PV/PVC also have no full imperative shortcut.** Copy the YAML template from Kubernetes docs:
+> Search: `kubernetes.io/docs/concepts/storage/persistent-volumes/`
+
+**💡 How to approach:** Copy the PV and PVC examples from docs. For the Pod, generate it with `--dry-run` and add the volume mount.
+
+```bash
+# Step 1: Use kubectl explain to check fields if needed
+kubectl explain pv.spec
+kubectl explain pv.spec.hostPath
+kubectl explain pvc.spec
+
+# Step 2: Create the PV and PVC YAML (copy from docs, modify values)
+vi pv-pvc.yaml
+```
+
+```yaml
+# pv-pvc.yaml – PV and PVC copied from docs, modified for our requirements
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-log
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /var/log/app
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-log
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+```bash
+# Step 3: Generate the Pod YAML with --dry-run, then add the volume
+kubectl run log-pod --image=busybox \
+  --dry-run=client -o yaml \
+  -- sh -c "while true; do echo \$(date) >> /app-log/output.log; sleep 5; done" > pod.yaml
+
+# Step 4: Edit pod.yaml to add volumeMounts and volumes
+vi pod.yaml
+```
+
+Add the following to the container and pod spec:
+
+```yaml
+    volumeMounts:
+    - mountPath: /app-log
+      name: log-volume
+  volumes:
+  - name: log-volume
+    persistentVolumeClaim:
+      claimName: pvc-log
+```
+
+```bash
+# Step 5: Apply everything and verify
+kubectl apply -f pv-pvc.yaml
+kubectl apply -f pod.yaml
+
+kubectl get pv
+kubectl get pvc
+kubectl get pods
+kubectl describe pvc pvc-log
+```
+
+---
+
+## 🏋️ Where to Practice
+
+### 🖥️ Practice Platforms
+
+| Platform | What it Offers |
+| ------------------------------ | -------------------------------------------------- |
+| **Killer Shell (killer.sh)** | 2 free CKA simulator sessions (included with exam purchase) — most realistic CKA exam simulator |
+| **Play with Kubernetes** | Free browser-based K8s cluster (limited time sessions) |
+| **minikube (local)** | Run a local single-node cluster on your laptop |
+| **kind (Kubernetes in Docker)** | Lightweight multi-node local cluster for quick practice |
+| **kubeadm on VMs** | Set up a real multi-node cluster on EC2/VirtualBox — best for CKA practice |
+
+> 💡 **Best practice strategy:** Set up a cluster using `kubeadm` on 2–3 VMs (1 control plane + 2 workers). This is exactly how the CKA exam environment works. minikube and EKS abstract away the cluster internals that CKA tests you on.
+
+### 📖 Official Documentation & References (Allowed During Exam)
+
+These are the **only websites allowed** during the CKA exam. Bookmark them and practice navigating them quickly.
+
+| Resource | URL |
+| --------------------------------- | -------------------------------------------------- |
+| **Kubernetes Official Docs** ⭐ | `https://kubernetes.io/docs/` |
+| **Kubernetes Blog** | `https://kubernetes.io/blog/` |
+| **Helm Docs** | `https://helm.sh/docs/` |
+| **kubectl Cheat Sheet** ⭐ | `https://kubernetes.io/docs/reference/kubectl/cheatsheet/` |
+| **kubectl Reference** | `https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands` |
+
+### 📖 Official CKA Exam Resources
+
+| Resource | URL |
+| --------------------------------- | -------------------------------------------------- |
+| **CKA Exam Curriculum (Syllabus)**| `https://github.com/cncf/curriculum` |
+| **CKA Registration Page** | `https://training.linuxfoundation.org/certification/certified-kubernetes-administrator-cka/` |
+| **CNCF CKA FAQ** | `https://docs.linuxfoundation.org/tc-docs/certification/faq-cka-ckad-cks` |
+| **PSI Exam System Requirements** | `https://docs.linuxfoundation.org/tc-docs/certification/lf-handbook2/exam-preparation-checklist` |
+| **Exam Candidate Handbook** | `https://docs.linuxfoundation.org/tc-docs/certification/lf-handbook2` |
+
+### 📖 Kubernetes Core Documentation
+
+| Resource | URL |
+| --------------------------------- | -------------------------------------------------- |
+| **Kubernetes GitHub** | `https://github.com/kubernetes/kubernetes` |
+| **Kubernetes API Reference** | `https://kubernetes.io/docs/reference/kubernetes-api/` |
+| **etcd Official Documentation** | `https://etcd.io/docs/` |
+| **kubeadm Documentation** | `https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/` |
+| **Kubernetes Release Notes** | `https://kubernetes.io/releases/` |
+
+### 📖 Most Useful Doc Pages for the CKA Exam (Bookmark These!)
+
+```
+📌 Pods              → kubernetes.io/docs/concepts/workloads/pods/
+📌 Deployments       → kubernetes.io/docs/concepts/workloads/controllers/deployment/
+📌 Services          → kubernetes.io/docs/concepts/services-networking/service/
+📌 Ingress           → kubernetes.io/docs/concepts/services-networking/ingress/
+📌 PV & PVC          → kubernetes.io/docs/concepts/storage/persistent-volumes/
+📌 Network Policy    → kubernetes.io/docs/concepts/services-networking/network-policies/
+📌 RBAC              → kubernetes.io/docs/reference/access-authn-authz/rbac/
+📌 etcd backup       → kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/
+📌 kubeadm upgrade   → kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/
+📌 Taints/Tolerations→ kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+📌 Static Pods       → kubernetes.io/docs/tasks/configure-pod-container/static-pod/
+📌 kubectl Cheat Sheet→ kubernetes.io/docs/reference/kubectl/cheatsheet/
+```
+
+---
+
+## 📊 Mapping This Course (Parts 1–10) to CKA Domains
+
+| CKA Domain | This Course Coverage | What's Extra for CKA |
+| ------- | ----------------------------------------- | ---- |
+| **Cluster Setup (25%)** | Cluster creation (Part 1), RBAC (Part 5), Network Policy (Part 10), Upgrade (Part 10) | kubeadm, etcd backup/restore, certificates |
+| **Workloads (15%)** | Pods, Deployments, ReplicaSets (Parts 2–6), Jobs/CronJobs (Part 9), PDB (Part 10) | Static Pods, Node affinity |
+| **Services & Networking (20%)** | Services (Parts 4–5), Ingress/ALB (Part 8), CNI/Network Policy (Part 10) | CoreDNS debugging, NGINX Ingress |
+| **Storage (10%)** | PV/PVC (Parts 5–6), CSI concepts (Part 10), StatefulSets (Part 9) | hostPath volumes, manual PV |
+| **Troubleshooting (30%)** | Probes & Init Containers (Part 7), Pod debugging | kubelet logs, etcd issues, broken nodes |
+
+> 🎯 You already cover approximately **60–70%** of the CKA syllabus from this course. Focus your additional study on **kubeadm**, **etcd**, and **troubleshooting**.
+
+---
+
+## 🗓️ Recommended Study Plan
+
+| Week | Focus Area | Action |
+| ---- | ---------------------------------------- | ------------------------------------------ |
+| 1 | Review Parts 1–10 of this course | Redo all hands-on exercises from scratch |
+| 2 | kubeadm cluster setup & etcd | Set up a cluster with kubeadm on VMs (EC2/VirtualBox), practice etcd backup/restore |
+| 3 | RBAC, Storage, Troubleshooting | Deep dive into Roles/Bindings, PV/PVC with hostPath, debug broken pods/nodes |
+| 4 | Practice with Killer Shell | Complete your 2 free Killer Shell simulator sessions (included with exam purchase) |
+| 5 | Weak areas + Speed training | Time yourself — practice generating YAML with `--dry-run`, aim to finish 15 questions in 90 minutes |
+| 6 | **Exam Day** | Take the exam with confidence! 🎉 |
+
+---
+
+## 🏆 Exam Day Tips
+
+1. ⏱️ **Time Management** — You have 2 hours for ~17 questions. That's ~7 minutes per question. If stuck, flag it and move on.
+2. 📋 **Read the question carefully** — Check the namespace, cluster context, and exact resource names.
+3. ⌨️ **Set up aliases first** — Spend the first 2 minutes setting up `alias k=kubectl` and auto-completion.
+4. 📖 **Use the docs** — Don't waste time memorizing. Copy YAML from kubernetes.io/docs.
+5. 🔄 **Use `--dry-run=client -o yaml`** — Generate YAML imperatively, then edit. Never write YAML from scratch.
+6. ✅ **Verify your work** — After every task, run `kubectl get` and `kubectl describe` to confirm.
+7. 🔀 **Switch contexts** — Always run the `kubectl config use-context` command given at the top of each question.
+8. 💾 **Don't forget to save** — In Vim, always `:wq` before moving on.
+9. 🧘 **Stay calm** — 66% is the passing score. You can afford to miss a few questions.
+10. 🔁 **Use your free retake** — If you don't pass, you get one free retake. Learn from the experience.
+
+---
+
 ### 📞 Contact Us
 **Phone:** [+91 91500 87745](tel:+919150087745)
 
@@ -2509,3 +4190,4 @@ Subscribe to our **YouTube Channel** – *Learn With Mithran*
 🎯 [Watch Now](https://www.youtube.com/@LearnWithMithran)
 
 ---
+
